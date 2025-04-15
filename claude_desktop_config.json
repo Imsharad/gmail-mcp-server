@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "python",
+      "args": ["-m", "src.server"],
+      "cwd": "/Users/sharad/Projects/mcp-hq/gmail-mcp-server"
+    }
+  }
+} 

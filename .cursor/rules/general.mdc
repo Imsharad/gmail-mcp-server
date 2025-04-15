@@ -1,0 +1,59 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Instructions
+
+During your interaction with the user, if you find anything reusable in this project (e.g., authentication patterns, Gmail API usage, error handling strategies), especially about a fix to a mistake you made or a correction you received, you should take note in the `Lessons` section in the `task_management.mdc` file so you will not make the same mistake again.
+
+You should also use the `.cursor/rules/*.mdc` file as a Scratchpad to organize your thoughts. When you receive a new task, first review the content of the Scratchpad, clear previous unrelated tasks if necessary, clearly explain the new task, and plan the steps you need to take to complete it. Use todo markers to indicate progress, e.g.:
+[X] Task 1
+[ ] Task 2
+
+Update the progress of the task in the Scratchpad whenever you finish a subtask. After completing a milestone, use the Scratchpad to reflect on your progress and plan the next steps. The goal is to help you maintain a clear overview of the project and track your progress effectively. Always refer to the Scratchpad when planning your next step.
+
+# Project Structure
+
+This is a Gmail MCP (Model Context Protocol) server with the following structure:
+- `/src`: Python source code for the server
+- `/credentials.json`: Google API credentials file
+- `/token.json`: User token file for Gmail API access
+- `/.env`: Environment configuration file
+
+# Technical Stack
+
+## Framework & Core Libraries
+- Python
+- Google API Client Library
+- Gmail API
+- OAuth2 for authentication
+
+## Development Tools
+- Virtual environment for dependency management
+- Environment variables for configuration (.env files)
+
+# Coding Standards
+
+## Python
+- Follow PEP 8 style guidelines
+- Use proper type hints
+- Create well-documented functions and classes
+- Use docstrings for all modules, classes, and functions
+
+## Module Structure
+- Keep modules focused on a single responsibility
+- Extract reusable functionality into separate modules
+- Organize code logically by functionality (e.g., authentication, email sending, email retrieval)
+
+## Error Handling
+- Use proper exception handling
+- Log errors appropriately using Python's logging module
+- Provide meaningful and user-friendly error messages
+
+## Naming Conventions
+- Use snake_case for functions and variables
+- Use PascalCase for class names
+- Use descriptive, semantic names that clearly reflect purpose
+
+# Tools

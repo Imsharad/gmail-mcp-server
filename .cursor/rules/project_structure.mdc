@@ -1,0 +1,37 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+## Python Development
+
+For development and running the Gmail MCP Server:
+
+```bash
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the MCP server
+python src/main.py
+
+# Run linting
+flake8 src/ --max-line-length=120
+
+# Generate requirements.txt
+pip freeze > requirements.txt
+```
+
+## Module Structure
+
+The server is organized into logical modules:
+- Authentication Module (gmail_api.py)
+- Email Processing Module
+- MCP Protocol Handler
+- Configuration Utilities
+- Error Handling Utilities
+
+When adding new functionality, follow the existing patterns in the codebase.

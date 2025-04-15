@@ -1,0 +1,54 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Error Prevention
+
+## Common Pitfalls to Avoid
+- Improper handling of Gmail API credentials
+- Not refreshing OAuth2 tokens when expired
+- Exposing sensitive data in error messages
+- Inconsistent error handling across API calls
+- Not validating email input formats
+- Forgetting to handle Gmail API rate limits
+- Mixing business logic with API client code
+
+## Before Implementing Changes
+- Validate .env configuration exists with proper paths
+- Ensure all API calls have proper error handling
+- Test authentication flow with invalid credentials
+- Verify token refresh functionality
+- Check for proper cleanup of temporary files
+- Validate email encoding/decoding handling
+
+# Lessons
+
+## User Specified Lessons
+
+- Maintain strict separation between API layer and business logic
+- Use Python's logging module consistently
+- Keep sensitive configuration in .env files
+- Follow Google's API best practices for token handling
+- Use type hints for all function signatures
+- Validate all external inputs
+- Implement proper retry logic for API calls
+- Maintain comprehensive documentation strings
+
+## Cursor learned
+
+- The project uses Google's OAuth2 for authentication
+- Token.json is automatically created/refreshed on first run
+- Credentials validation happens during server startup
+- Gmail API scopes are carefully limited to required permissions
+- Email messages are encoded/decoded using base64
+- MIME types are handled using standard email library
+- The service account pattern isn't used (desktop app OAuth)
+- API client is initialized during authentication
+- All API interactions go through the GmailAPI wrapper class
+- Environment variables are loaded from .env file
+- Separate configuration files for credentials and tokens
+- Proper error handling for common API exceptions
+- Rate limiting is handled with exponential backoff
+- Structured logging is implemented for audit purposes
+
