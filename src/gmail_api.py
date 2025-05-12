@@ -270,8 +270,8 @@ class GmailAPI:
         """Reply to an existing email.
         
         Args:
-            message_id: ID of the message to reply to
-            body: Reply message content
+            message_id: ID of the email to reply to
+            body: Reply content
         
         Returns:
             Message ID if successful, None otherwise
@@ -281,51 +281,103 @@ class GmailAPI:
             return None
         
         try:
-            # Get the original message to extract headers
+            # Get the original message to extract thread ID and subject
             original = self.service.users().messages().get(
-                userId='me', id=message_id, format='metadata',
-                metadataHeaders=['Subject', 'From', 'To', 'Message-ID', 'References', 'In-Reply-To']
-            ).execute()
+                userId='me', id=message_id, format='metadata').execute()
             
-            # Extract headers
+            # Extract thread ID
+            thread_id = original['threadId']
+            
+            # Extract headers from original message
             headers = {}
             for header in original['payload']['headers']:
                 headers[header['name'].lower()] = header['value']
             
-            # Create a reply message
+            # Create reply
             message = MIMEMultipart()
             message['to'] = headers.get('from', '')
             
-            # Add proper reply subject
+            # Add Re: prefix if not already present
             subject = headers.get('subject', '')
             if not subject.startswith('Re:'):
                 subject = f"Re: {subject}"
             message['subject'] = subject
             
-            # Set threading headers
-            if 'message-id' in headers:
-                message['In-Reply-To'] = headers['message-id']
-                message['References'] = headers.get('references', headers['message-id'])
+            # Set In-Reply-To and References headers for proper threading
+            message['In-Reply-To'] = headers.get('message-id', '')
+            references = headers.get('references', '')
+            if references:
+                references += " "
+            references += headers.get('message-id', '')
+            message['References'] = references
             
-            # Add body
+            # Add the reply text
             message.attach(MIMEText(body, 'plain'))
             
-            # Encode the message
-            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            # Convert to base64 encoded string
+            raw_message = base64.urlsafe_b64encode(
+                message.as_bytes()).decode('utf-8')
             
-            # Send the message
+            # Send the message via the Gmail API
             sent_message = self.service.users().messages().send(
-                userId='me', body={'raw': raw_message}).execute()
-            
-            # Add the message to the thread
-            self.service.users().messages().modify(
-                userId='me', id=sent_message['id'],
-                body={'addLabelIds': [], 'removeLabelIds': ['INBOX']}
+                userId='me', 
+                body={'raw': raw_message, 'threadId': thread_id}
             ).execute()
             
-            logger.info(f"Reply sent successfully with ID: {sent_message['id']}")
+            logger.info(f"Reply sent with message ID: {sent_message['id']}")
             return sent_message['id']
         
         except Exception as e:
-            logger.error(f"Error replying to message: {e}")
-            return None 
+            logger.error(f"Error replying to message {message_id}: {e}")
+            return None
+            
+    def delete_message(self, message_id: str) -> bool:
+        """Delete a specific email message.
+        
+        Args:
+            message_id: ID of the email to delete
+            
+        Returns:
+            True if deletion was successful, False otherwise
+        """
+        if not self.authenticated:
+            logger.error("Not authenticated with Gmail API")
+            return False
+            
+        try:
+            # Use the trash method to move the message to trash
+            self.service.users().messages().trash(
+                userId='me', id=message_id).execute()
+            logger.info(f"Successfully deleted message ID: {message_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting message {message_id}: {e}")
+            return False
+            
+    def batch_delete_messages(self, message_ids: List[str]) -> Dict[str, Any]:
+        """Delete multiple email messages in a batch operation.
+        
+        Args:
+            message_ids: List of message IDs to delete
+            
+        Returns:
+            Dictionary with counts of successful and failed deletions
+        """
+        if not self.authenticated:
+            logger.error("Not authenticated with Gmail API")
+            return {"success": 0, "failed": len(message_ids), "failed_ids": message_ids}
+            
+        results = {"success": 0, "failed": 0, "failed_ids": []}
+        
+        for message_id in message_ids:
+            try:
+                self.service.users().messages().trash(
+                    userId='me', id=message_id).execute()
+                results["success"] += 1
+                logger.info(f"Successfully deleted message ID: {message_id}")
+            except Exception as e:
+                results["failed"] += 1
+                results["failed_ids"].append(message_id)
+                logger.error(f"Error deleting message {message_id}: {e}")
+                
+        return results 

@@ -9,6 +9,8 @@ This MCP server provides access to Gmail functionality through the Model Context
 - Read email content
 - Send new emails
 - Reply to existing emails
+- Delete individual emails
+- Batch delete multiple emails at once
 
 ## Setup
 
@@ -130,6 +132,43 @@ Configure Claude Desktop to use this server by adding it to your `claude_desktop
   }
 }
 ```
+
+### Available Tool Functions
+
+The Gmail MCP Server provides the following tool functions:
+
+1. **list_emails** - Lists emails from your Gmail inbox
+   - Parameters: 
+     - `max_results`: Maximum number of emails to return (default: 10)
+     - `label`: Gmail label to filter by (default: INBOX)
+
+2. **get_email** - Gets the full content of a specific email
+   - Parameters:
+     - `email_id`: The ID of the email to retrieve
+
+3. **search_emails** - Searches for emails matching a query
+   - Parameters:
+     - `query`: Search query to match against email fields
+     - `max_results`: Maximum number of results to return (default: 5)
+
+4. **send_email** - Sends a new email
+   - Parameters:
+     - `to`: Recipient email address
+     - `subject`: Email subject
+     - `body`: Email body content
+
+5. **reply_to_email** - Replies to an existing email
+   - Parameters:
+     - `email_id`: ID of the email to reply to
+     - `body`: Reply message content
+
+6. **delete_email** - Deletes a single email
+   - Parameters:
+     - `email_id`: ID of the email to delete
+
+7. **delete_emails** - Deletes multiple emails in a batch operation
+   - Parameters:
+     - `email_ids`: List of email IDs to delete
 
 ## Design Philosophy
 

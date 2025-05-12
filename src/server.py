@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
 # Import MCP SDK
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 # Import Gmail API module
 from src.gmail_api import GmailAPI
@@ -174,7 +174,45 @@ async def reply_to_email(email_id: str, body: str) -> str:
     else:
         return "Failed to send reply. Please check the logs for details."
 
+@mcp.tool()
+async def delete_email(email_id: str) -> str:
+    """Delete a single email.
+    
+    Args:
+        email_id: ID of the email to delete
+    
+    Returns:
+        Confirmation message
+    """
+    # Use Gmail API
+    success = gmail_api.delete_message(email_id)
+    
+    if success:
+        return f"Email with ID {email_id} deleted successfully."
+    else:
+        return f"Failed to delete email with ID {email_id}. Please check the logs for details."
+
+@mcp.tool()
+async def delete_emails(email_ids: List[str]) -> str:
+    """Delete multiple emails.
+    
+    Args:
+        email_ids: List of email IDs to delete
+    
+    Returns:
+        Confirmation message with results
+    """
+    # Use Gmail API
+    results = gmail_api.batch_delete_messages(email_ids)
+    
+    if results["success"] > 0 and results["failed"] == 0:
+        return f"All {results['success']} emails were deleted successfully."
+    elif results["success"] > 0 and results["failed"] > 0:
+        return f"{results['success']} emails deleted successfully. {results['failed']} emails failed to delete: {', '.join(results['failed_ids'])}"
+    else:
+        return f"Failed to delete any emails. Please check the logs for details."
+
 # Run the server
 if __name__ == "__main__":
     logger.info("Starting Gmail MCP Server...")
-    mcp.run()
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000, path="/mcp")
