@@ -3,7 +3,9 @@
     "gmail": {
       "command": "python",
       "args": ["-m", "src.server"],
-      "cwd": "/Users/sharad/Projects/mcp-hq/gmail-mcp-server"
+      "cwd": "/Users/sharad/Projects/mcp-hq/gmail-mcp-server",
+      "transport": "streamable-http",
+      "url": "http://localhost:8001/mcp"
     }
   }
 } 
