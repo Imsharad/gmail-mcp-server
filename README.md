@@ -120,6 +120,14 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 python -m src.server
 ```
 
+The server will automatically find an available port if the default one (8000) is already in use. You can configure the preferred host, port, and path in the `.env` file:
+
+```
+SERVER_HOST=0.0.0.0   # The host address to bind to
+SERVER_PORT=8000      # The preferred port (will use next available if busy)
+SERVER_PATH=/mcp      # The URL path for the MCP server
+```
+
 Configure Claude Desktop to use this server by adding it to your `claude_desktop_config.json`:
 ```json
 {
@@ -179,6 +187,15 @@ This project follows a lean, efficient design philosophy:
 4. Focus on reliability and performance
 
 ## Troubleshooting
+
+### Server Port Issues
+
+If you encounter issues with the server port:
+
+1. The server will automatically try to find an available port if the default one (8000) is in use
+2. Check the console logs to see which port was actually used
+3. You can manually specify a different port in the `.env` file
+4. Make sure your Claude Desktop configuration points to the correct port
 
 ### Authentication Issues
 

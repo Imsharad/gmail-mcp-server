@@ -6,6 +6,7 @@ Gmail MCP Server - Provides Gmail functionality through the Model Context Protoc
 import os
 import json
 import logging
+import socket
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
@@ -29,6 +30,9 @@ mcp = FastMCP("gmail")
 # Initialize Gmail API client
 CREDENTIALS_FILE = os.getenv('CREDENTIALS_FILE', 'credentials.json')
 TOKEN_FILE = os.getenv('TOKEN_FILE', 'token.json')
+SERVER_HOST = os.getenv('SERVER_HOST', '0.0.0.0')
+PREFERRED_PORT = int(os.getenv('SERVER_PORT', '8000'))
+SERVER_PATH = os.getenv('SERVER_PATH', '/mcp')
 
 # Initialize Gmail API
 gmail_api = GmailAPI(CREDENTIALS_FILE, TOKEN_FILE)
@@ -212,7 +216,45 @@ async def delete_emails(email_ids: List[str]) -> str:
     else:
         return f"Failed to delete any emails. Please check the logs for details."
 
+def find_available_port(start_port: int, max_attempts: int = 10) -> int:
+    """Find an available port starting from the given port.
+    
+    Args:
+        start_port: The preferred port to start checking from
+        max_attempts: Maximum number of ports to check
+        
+    Returns:
+        An available port number or -1 if no port is available
+    """
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((SERVER_HOST, port))
+                # If we get here, the port is available
+                return port
+            except socket.error:
+                logger.info(f"Port {port} is already in use, trying next port...")
+                continue
+    return -1
+
 # Run the server
 if __name__ == "__main__":
     logger.info("Starting Gmail MCP Server...")
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000, path="/mcp")
+    
+    # Find an available port
+    port = find_available_port(PREFERRED_PORT)
+    
+    if port == -1:
+        logger.error(f"Could not find an available port after trying {PREFERRED_PORT} through {PREFERRED_PORT + 9}")
+        raise RuntimeError("No available ports found")
+    
+    if port != PREFERRED_PORT:
+        logger.warning(f"Preferred port {PREFERRED_PORT} was not available. Using port {port} instead.")
+    
+    logger.info(f"Server will run on {SERVER_HOST}:{port}{SERVER_PATH}")
+    
+    try:
+        mcp.run(transport="streamable-http", host=SERVER_HOST, port=port, path=SERVER_PATH)
+    except Exception as e:
+        logger.error(f"Error starting server: {e}")
+        raise
