@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import Gmail API module
-from src.gmail_api import GmailAPI
+from src.gmail_api import GmailClient
 
 # Load environment variables
 load_dotenv()
@@ -36,7 +36,7 @@ def main():
         return
         
     # Initialize Gmail API
-    gmail_api = GmailAPI(credentials_file, token_file)
+    gmail_api = GmailClient(credentials_file, token_file)
     
     # Authenticate
     auth_success = gmail_api.authenticate()

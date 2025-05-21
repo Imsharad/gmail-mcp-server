@@ -2,6 +2,8 @@ import base64
 import logging
 from typing import Optional, Dict, List, Any
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase # For creating attachment parts
 
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
@@ -19,7 +21,7 @@ def _create_mime_message(to: str, subject: str, body: str) -> str:
     Returns:
         A base64url encoded email message.
     """
-    message = MIMEText(body)
+    message = MIMEText(body, _charset='utf-8')
     message['to'] = to
     message['subject'] = subject
     return base64.urlsafe_b64encode(message.as_bytes()).decode()

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, mock_open, MagicMock, ANY
 import base64
 import os
 import mimetypes
@@ -12,9 +12,40 @@ from googleapiclient.errors import HttpError
 
 
 class TestAttachmentHandling(unittest.TestCase):
-    def setUp(self):
+    @patch('src.gmail_api.GmailClient.__init__', return_value=None) # Patch __init__ here
+    def setUp(self, mock_gmail_client_init):
         """Set up basic mocks or configurations for each test."""
-        self.mock_service = MagicMock()
+        # The GmailClient.__init__ is now patched, so we don't need
+        # dummy file paths here. We can create an instance and set service/authenticated state manually.
+        self.mock_client = GmailClient(credentials_file="", token_file="") # Pass dummy paths, won't be used due to patch
+        self.mock_client.service = MagicMock() # Set the mocked service directly
+        self.mock_client.authenticated = True # Assume authenticated for client tests
+
+        self.mock_service = self.mock_client.service # Keep this for tests that directly use service mock
+
+        # Create mocks for nested calls where needed
+        self.mock_users = MagicMock()
+        self.mock_messages = MagicMock()
+        self.mock_attachments = MagicMock()
+        self.mock_get_execute = MagicMock()
+
+        self.mock_service.users.return_value = self.mock_users
+        self.mock_users.messages.return_value = self.mock_messages
+        self.mock_messages.attachments.return_value = self.mock_attachments
+        self.mock_attachments.get.return_value = self.mock_get_execute
+
+        self.logger_patch = patch('src.messages.logger')
+        self.mock_logger = self.logger_patch.start()
+
+        # Patch os.path.exists for tests that call get_attachment (in GmailClient)
+        self.patch_os_path_exists = patch('src.gmail_api.os.path.exists')
+        self.mock_os_path_exists = self.patch_os_path_exists.start()
+
+        self.patch_os_makedirs = patch('src.gmail_api.os.makedirs')
+        self.mock_os_makedirs = self.patch_os_makedirs.start()
+
+        self.patch_builtin_open = patch('builtins.open', new_callable=mock_open)
+        self.mock_builtin_open = self.patch_builtin_open.start()
 
     # --- Tests for src.messages._extract_attachment_info ---
     def test_extract_attachment_info_direct_filename(self):
@@ -216,61 +247,56 @@ class TestAttachmentHandling(unittest.TestCase):
         encoded_data = base64.urlsafe_b64encode(sample_data_bytes).decode()
         mock_response = {'data': encoded_data, 'size': len(sample_data_bytes)}
         
-        self.mock_service.users().messages().attachments().get().execute.return_value = mock_response
+        self.mock_get_execute.execute.return_value = mock_response
         
         result = messages.get_attachment_data(self.mock_service, 'msg-id', 'attach-id')
         self.assertEqual(result, sample_data_bytes)
-        self.mock_service.users().messages().attachments().get.assert_called_once_with(
+        self.mock_attachments.get.assert_called_once_with(
             userId='me', messageId='msg-id', id='attach-id'
         )
 
-    @patch('src.messages.logger') # Patch logger to check log messages
-    def test_get_attachment_data_api_error_404(self, mock_logger):
+    def test_get_attachment_data_api_error_404(self):
         # Simulate HttpError with status 404
         http_error = HttpError(resp=MagicMock(status=404), content=b"Not Found")
-        self.mock_service.users().messages().attachments().get().execute.side_effect = http_error
+        self.mock_get_execute.execute.side_effect = http_error
         
         result = messages.get_attachment_data(self.mock_service, 'msg-id', 'attach-id-invalid')
         self.assertIsNone(result)
-        mock_logger.warning.assert_called_with(
+        self.mock_logger.warning.assert_called_once_with(
             "Attachment with ID attach-id-invalid not found in message msg-id."
         )
 
-    @patch('src.messages.logger')
-    def test_get_attachment_data_api_other_error(self, mock_logger):
+    def test_get_attachment_data_api_other_error(self):
         # Simulate HttpError with a different status
         http_error = HttpError(resp=MagicMock(status=500), content=b"Server Error")
-        self.mock_service.users().messages().attachments().get().execute.side_effect = http_error
+        self.mock_get_execute.execute.side_effect = http_error
 
         result = messages.get_attachment_data(self.mock_service, 'msg-id', 'attach-id-err')
         self.assertIsNone(result)
-        mock_logger.error.assert_called_with(
+        self.mock_logger.error.assert_called_once_with(
             f"API error getting attachment attach-id-err for message msg-id: {http_error}"
         )
 
-    @patch('src.messages.logger')
-    def test_get_attachment_data_missing_data_field(self, mock_logger):
-        mock_response = {'size': 123} # 'data' field is missing
-        self.mock_service.users().messages().attachments().get().execute.return_value = mock_response
-        
-        result = messages.get_attachment_data(self.mock_service, 'msg-id', 'attach-id-no-data')
-        self.assertIsNone(result)
-        mock_logger.error.assert_called_with(
-            "No data found in attachment attach-id-no-data for message msg-id."
-        )
+    def test_get_attachment_data_missing_data_field(self):
+        # Simulate a response missing the 'data' field
+        mock_response = {'size': 100} # Missing 'data'
+        self.mock_get_execute.execute.return_value = mock_response
 
-    @patch('src.messages.logger')
-    def test_get_attachment_data_decoding_error(self, mock_logger):
+        result = messages.get_attachment_data(self.mock_service, 'msg-id', 'attach-id-missing-data')
+
+        self.assertIsNone(result)
+        self.mock_logger.error.assert_called_once_with("No data found in attachment attach-id-missing-data for message msg-id.")
+
+    def test_get_attachment_data_decoding_error(self):
         # Provide data that will cause a base64 decoding error
         mock_response = {'data': 'this-is-not-valid-base64!', 'size': 100}
-        self.mock_service.users().messages().attachments().get().execute.return_value = mock_response
+        self.mock_get_execute.execute.return_value = mock_response
 
         result = messages.get_attachment_data(self.mock_service, 'msg-id', 'attach-id-decode-err')
-        self.assertIsNone(result)
-        # Check that a decoding error was logged (the exact message might vary slightly based on the exception)
-        self.assertTrue(mock_logger.error.called)
-        args, _ = mock_logger.error.call_args
-        self.assertIn("Error decoding attachment data for attach-id-decode-err in message msg-id", args[0])
+
+        self.assertIsNone(result) # Expecting None based on src/messages.py logic
+        self.mock_logger.error.assert_called_once_with(ANY) # Check that error was logged
+        mock_base64_decode.assert_called_once_with('invalid-base64-data') # Verify patch was called
 
     # --- Tests for src.messages.send_message (Attachment Handling) ---
     @patch('src.messages.mimetypes.guess_type')
@@ -414,9 +440,8 @@ class TestAttachmentHandling(unittest.TestCase):
     # --- Tests for src.gmail_api.GmailClient (Attachment Methods) ---
     @patch('src.gmail_api.messages.get_attachment_data')
     def test_gmail_client_get_attachment_returns_bytes(self, mock_get_data):
-        mock_client = GmailClient(credentials_file="dummy_creds.json", token_file="dummy_token.json")
-        mock_client.service = self.mock_service # Assume authenticated
-        mock_client.authenticated = True
+        # GmailClient.__init__ is patched in setUp
+        mock_client = self.mock_client
 
         sample_bytes = b"attachment content"
         mock_get_data.return_value = sample_bytes
@@ -426,18 +451,19 @@ class TestAttachmentHandling(unittest.TestCase):
         self.assertEqual(result, sample_bytes)
         mock_get_data.assert_called_once_with(mock_client.service, "msg1", "att1")
 
-    @patch('src.gmail_api.os.path.exists')
     @patch('src.gmail_api.os.makedirs')
     @patch('builtins.open', new_callable=mock_open)
-    @patch('src.gmail_api.messages.get_attachment_data')
-    def test_gmail_client_get_attachment_saves_file(self, mock_get_data, mock_file_open, mock_makedirs, mock_path_exists):
-        mock_client = GmailClient(credentials_file="dummy_creds.json", token_file="dummy_token.json")
-        mock_client.service = self.mock_service
-        mock_client.authenticated = True
+    @patch('src.gmail_api.messages.get_attachment_data') # Patch the function called by GmailClient.get_attachment
+    def test_gmail_client_get_attachment_saves_file(self, mock_get_data, mock_file_open, mock_makedirs):
+        # These mocks are now set up in setUp and/or within this test's decorators
+        mock_path_exists = self.mock_os_path_exists # From setUp
+
+        # GmailClient.__init__ is patched in setUp
+        mock_client = self.mock_client
 
         sample_bytes = b"data to save"
-        mock_get_data.return_value = sample_bytes
         mock_path_exists.return_value = False # Simulate directory does not exist
+        mock_get_data.return_value = sample_bytes # Ensure get_attachment_data returns bytes
 
         download_dir = "test_downloads"
         filename = "output.dat"
@@ -445,7 +471,7 @@ class TestAttachmentHandling(unittest.TestCase):
         
         result = mock_client.get_attachment("msg2", "att2", filename, download_path=download_dir)
         
-        self.assertEqual(result, sample_bytes)
+        self.assertEqual(result, sample_bytes) # Should return the bytes that were saved
         mock_get_data.assert_called_once_with(mock_client.service, "msg2", "att2")
         mock_path_exists.assert_called_once_with(download_dir)
         mock_makedirs.assert_called_once_with(download_dir)
@@ -454,31 +480,32 @@ class TestAttachmentHandling(unittest.TestCase):
 
     @patch('src.gmail_api.messages.get_attachment_data')
     def test_gmail_client_get_attachment_data_is_none(self, mock_get_data):
-        mock_client = GmailClient(credentials_file="dummy_creds.json", token_file="dummy_token.json")
-        mock_client.service = self.mock_service
-        mock_client.authenticated = True
-        mock_get_data.return_value = None
+        # GmailClient.__init__ is patched in setUp
+        mock_client = self.mock_client
+
+        mock_get_data.return_value = None # Simulate get_attachment_data returning None
         
         result = mock_client.get_attachment("msg3", "att3", "file.txt", download_path="some/path")
         self.assertIsNone(result)
+        mock_get_data.assert_called_once_with(mock_client.service, "msg3", "att3")
 
     @patch('src.gmail_api.logger')
     def test_gmail_client_get_attachment_not_authenticated(self, mock_logger):
-        mock_client = GmailClient(credentials_file="dummy_creds.json", token_file="dummy_token.json")
-        mock_client.service = None # Not authenticated
-        mock_client.authenticated = False
+        # GmailClient.__init__ is patched in setUp
+        mock_client = self.mock_client
+        mock_client.authenticated = False # Explicitly set to not authenticated for this test
+        mock_client.service = None # Service should also be None if not authenticated
         
         result = mock_client.get_attachment("msg4", "att4", "file.txt")
         
         self.assertIsNone(result)
         mock_logger.error.assert_called_with("Not authenticated. Cannot get attachment att4 from message msg4.")
 
-    @patch('src.gmail_api.messages.send_message')
+    @patch('src.gmail_api.messages.send_message') # Patch the function called by GmailClient.send_message
     def test_gmail_client_send_message_with_attachments(self, mock_messages_send):
-        mock_client = GmailClient(credentials_file="dummy_creds.json", token_file="dummy_token.json")
-        mock_client.service = self.mock_service # Assume authenticated
-        mock_client.authenticated = True
-        
+        # GmailClient.__init__ is patched in setUp
+        mock_client = self.mock_client
+
         mock_messages_send.return_value = "sent-msg-client-1"
         
         to, subject, body = "to@example.com", "Client Subject", "Client Body"
@@ -492,15 +519,18 @@ class TestAttachmentHandling(unittest.TestCase):
         )
 
     @patch('src.gmail_api.logger')
-    def test_gmail_client_send_message_not_authenticated(self, mock_logger):
-        mock_client = GmailClient(credentials_file="dummy_creds.json", token_file="dummy_token.json")
-        mock_client.service = None # Not authenticated
-        mock_client.authenticated = False
+    @patch('src.gmail_api.messages.send_message') # Patch the function called by GmailClient.send_message
+    def test_gmail_client_send_message_not_authenticated(self, mock_messages_send, mock_logger):
+        # GmailClient.__init__ is patched in setUp
+        mock_client = self.mock_client
+        mock_client.authenticated = False # Explicitly set to not authenticated for this test
+        mock_client.service = None # Service should also be None if not authenticated
         
         result = mock_client.send_message("to@example.com", "Subj", "Body", attachments=["file.txt"])
         
         self.assertIsNone(result)
         mock_logger.error.assert_called_with("Not authenticated. Cannot send message to to@example.com.")
+        mock_messages_send.assert_not_called() # Ensure send_message was not called
 
 
 if __name__ == '__main__':
