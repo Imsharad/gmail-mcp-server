@@ -363,6 +363,221 @@ async def remove_labels_from_email(email_id: str, label_ids: List[str]) -> str:
     else:
         return f"Failed to remove labels from email {email_id}. Check if the email ID and label IDs are valid. Check logs."
 
+# --- Draft Management Tools ---
+
+@mcp.tool()
+async def list_drafts(max_results: int = 10) -> str:
+    """List email drafts.
+    
+    Args:
+        max_results: Maximum number of drafts to return (default: 10).
+    
+    Returns:
+        A formatted string containing draft information, or a message if no drafts are found or an error occurs.
+    """
+    try:
+        draft_list = gmail_client.list_drafts(max_results=max_results)
+        
+        if not draft_list:
+            return "No drafts found."
+        
+        response = f"Found {len(draft_list)} drafts:\n\n"
+        for draft in draft_list:
+            draft_id = draft.get('id', 'N/A')
+            message_data = draft.get('message', {})
+            
+            payload = message_data.get('payload', {})
+            headers_list = payload.get('headers', [])
+            headers = {h['name'].lower(): h['value'] for h in headers_list}
+            
+            subject = headers.get('subject', 'N/A')
+            to_recipients = headers.get('to', 'N/A')
+            snippet = message_data.get('snippet', 'N/A')
+
+            response += f"ID: {draft_id}\n"
+            response += f"  To: {to_recipients}\n"
+            response += f"  Subject: {subject}\n"
+            response += f"  Snippet: {snippet}\n"
+            response += "---\n"
+        return response
+    except Exception as e:
+        logger.error(f"Error in list_drafts tool: {e}")
+        return f"An error occurred while listing drafts: {e}"
+
+@mcp.tool()
+async def get_draft(draft_id: str) -> str:
+    """Get the full content of a specific email draft.
+    
+    Args:
+        draft_id: The ID of the draft to retrieve.
+    
+    Returns:
+        The full draft content including headers and body, or a message if not found.
+    """
+    try:
+        draft = gmail_client.get_draft(draft_id)
+        
+        if not draft:
+            return f"Draft with ID '{draft_id}' not found."
+        
+        message_data = draft.get('message', {})
+        payload = message_data.get('payload', {})
+        headers_list = payload.get('headers', [])
+        headers = {h['name'].lower(): h['value'] for h in headers_list}
+
+        response = f"Draft ID: {draft.get('id', 'N/A')}\n"
+        response += f"From: {headers.get('from', 'N/A')}\n"
+        response += f"To: {headers.get('to', 'N/A')}\n"
+        cc_recipients = headers.get('cc')
+        if cc_recipients:
+            response += f"Cc: {cc_recipients}\n"
+        response += f"Subject: {headers.get('subject', 'N/A')}\n"
+        
+        # Extracting body (simplified, assumes plain text for drafts)
+        # Similar to get_email, but drafts might not be as complex
+        body_content = "N/A"
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part.get('mimeType') == 'text/plain':
+                    if 'data' in part['body']:
+                        body_content = gmail_client.service.users().messages().get( # Hacky, but body isn't directly in draft
+                            userId='me', id=message_data['id'], format='raw' 
+                        ).execute()['raw'] # This is not ideal as it re-fetches
+                        # A better way would be to decode from part['body']['data'] if available
+                        # but draft message parts often don't have 'data' directly, they are references
+                        # For simplicity, let's try to decode if data is present, else use snippet
+                        import base64
+                        try:
+                            body_content = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                            break
+                        except (KeyError, TypeError, binascii.Error): # binascii for potential padding errors
+                             pass # Fallback to snippet or N/A if direct body decoding fails
+            if body_content == "N/A": # If plain text part not found or failed
+                body_content = message_data.get('snippet', 'Body not directly available, snippet shown.')
+
+        elif 'body' in payload and 'data' in payload['body']:
+            import base64
+            try:
+                body_content = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
+            except (KeyError, TypeError, binascii.Error):
+                 body_content = message_data.get('snippet', 'Body not directly available, snippet shown.')
+        else:
+            body_content = message_data.get('snippet', 'Body not available.')
+
+
+        response += f"\nBody:\n{body_content}\n"
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error in get_draft tool for ID {draft_id}: {e}")
+        return f"An error occurred while retrieving draft {draft_id}: {e}"
+
+@mcp.tool()
+async def create_draft(to: str, subject: str, body: str) -> str:
+    """Create a new email draft.
+    
+    Args:
+        to: Recipient email address.
+        subject: Email subject.
+        body: Email body content.
+    
+    Returns:
+        Confirmation message with the new draft ID or an error message.
+    """
+    try:
+        if not to or not subject: # Basic validation
+            return "Recipient 'to' and 'subject' cannot be empty for creating a draft."
+
+        created_draft = gmail_client.create_draft(to, subject, body)
+        
+        if created_draft and created_draft.get('id'):
+            return f"Draft created successfully. ID: {created_draft['id']}"
+        else:
+            # Log the actual response from gmail_client if it's unexpected
+            logger.warning(f"Failed to create draft. Gmail_client.create_draft returned: {created_draft}")
+            return "Failed to create draft. Please check the logs for details."
+    except Exception as e:
+        logger.error(f"Error in create_draft tool: {e}")
+        return f"An error occurred while creating the draft: {e}"
+
+@mcp.tool()
+async def update_draft(draft_id: str, to: str, subject: str, body: str) -> str:
+    """Update an existing email draft.
+    
+    Args:
+        draft_id: The ID of the draft to update.
+        to: New recipient email address.
+        subject: New email subject.
+        body: New email body content.
+    
+    Returns:
+        Confirmation message or an error message.
+    """
+    try:
+        if not draft_id or not to or not subject: # Basic validation
+            return "Draft ID, recipient 'to', and 'subject' cannot be empty for updating a draft."
+
+        updated_draft = gmail_client.update_draft(draft_id, to, subject, body)
+        
+        if updated_draft and updated_draft.get('id'):
+            return f"Draft with ID '{updated_draft['id']}' updated successfully."
+        else:
+            logger.warning(f"Failed to update draft {draft_id}. Gmail_client.update_draft returned: {updated_draft}")
+            return f"Failed to update draft with ID '{draft_id}'. It might not exist or an error occurred. Check logs."
+    except Exception as e:
+        logger.error(f"Error in update_draft tool for ID {draft_id}: {e}")
+        return f"An error occurred while updating draft {draft_id}: {e}"
+
+@mcp.tool()
+async def delete_draft(draft_id: str) -> str:
+    """Delete an email draft.
+    
+    Args:
+        draft_id: The ID of the draft to delete.
+    
+    Returns:
+        Confirmation message or an error message.
+    """
+    try:
+        if not draft_id:
+            return "Draft ID cannot be empty."
+            
+        success = gmail_client.delete_draft(draft_id)
+        
+        if success:
+            return f"Draft with ID '{draft_id}' deleted successfully."
+        else:
+            # Log implicitly handled by gmail_client.delete_draft for 404s or other errors
+            return f"Failed to delete draft with ID '{draft_id}'. It might not exist or an error occurred. Check logs."
+    except Exception as e:
+        logger.error(f"Error in delete_draft tool for ID {draft_id}: {e}")
+        return f"An error occurred while deleting draft {draft_id}: {e}"
+
+@mcp.tool()
+async def send_draft(draft_id: str) -> str:
+    """Send an existing email draft.
+    
+    Args:
+        draft_id: The ID of the draft to send.
+    
+    Returns:
+        Confirmation message with the sent message ID or an error message.
+    """
+    try:
+        if not draft_id:
+            return "Draft ID cannot be empty."
+
+        sent_message = gmail_client.send_draft(draft_id)
+        
+        if sent_message and sent_message.get('id'):
+            return f"Draft with ID '{draft_id}' sent successfully. Message ID: {sent_message['id']}"
+        else:
+            # Log implicitly handled by gmail_client.send_draft for 404s or other errors
+            return f"Failed to send draft with ID '{draft_id}'. It might not exist or an error occurred. Check logs."
+    except Exception as e:
+        logger.error(f"Error in send_draft tool for ID {draft_id}: {e}")
+        return f"An error occurred while sending draft {draft_id}: {e}"
+
 def find_available_port(start_port: int, max_attempts: int = 10) -> int:
     """Find an available port starting from the given port.
     
