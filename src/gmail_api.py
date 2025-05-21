@@ -6,6 +6,7 @@ coordinating authentication and delegating actions to specific modules.
 """
 
 import logging
+import os # Added for path manipulation
 from typing import Dict, List, Any, Optional
 
 # Import the specific functions/modules needed
@@ -71,12 +72,22 @@ class GmailClient:
             return None
         return messages.get_message(self.service, message_id)
 
-    def send_message(self, to: str, subject: str, body: str) -> Optional[str]:
-        """Send a new email. Delegates to the messages module."""
+    def send_message(self, to: str, subject: str, body: str, attachments: Optional[List[str]] = None) -> Optional[str]:
+        """Send a new email, optionally with attachments. Delegates to the messages module.
+
+        Args:
+            to: Recipient email address.
+            subject: Email subject.
+            body: Email body content (plain text).
+            attachments: Optional. A list of file paths for files to be attached.
+
+        Returns:
+            Message ID if successful, None otherwise.
+        """
         if not self.authenticated or not self.service:
             logger.error(f"Not authenticated. Cannot send message to {to}.")
             return None
-        return messages.send_message(self.service, to, subject, body)
+        return messages.send_message(self.service, to, subject, body, attachments=attachments)
 
     def reply_to_message(self, message_id: str, body: str) -> Optional[str]:
         """Reply to an existing email. Delegates to the messages module."""
@@ -140,4 +151,57 @@ class GmailClient:
         if not self.authenticated or not self.service:
             logger.error(f"Not authenticated. Cannot delete label {label_id}.")
             return False
-        return labels.delete_label(self.service, label_id) 
+        return labels.delete_label(self.service, label_id)
+
+    def get_attachment(self, message_id: str, attachment_id: str, filename: str, download_path: Optional[str] = None) -> Optional[bytes]:
+        """Fetches an attachment's data and optionally saves it to a file.
+
+        Args:
+            message_id: The ID of the message containing the attachment.
+            attachment_id: The ID of the attachment to retrieve.
+            filename: The filename for the attachment (used if saving to disk).
+            download_path: Optional. If provided, the directory where the attachment
+                           will be saved. The filename from the metadata is used.
+
+        Returns:
+            The attachment data as bytes if successful, None otherwise.
+            If download_path is specified and saving is successful, it still returns
+            the bytes of the attachment.
+        """
+        if not self.authenticated or not self.service:
+            logger.error(f"Not authenticated. Cannot get attachment {attachment_id} from message {message_id}.")
+            return None
+
+        logger.info(f"Attempting to fetch attachment {attachment_id} for message {message_id}.")
+        attachment_data = messages.get_attachment_data(self.service, message_id, attachment_id)
+
+        if attachment_data is None:
+            logger.error(f"Failed to retrieve attachment data for {attachment_id} from message {message_id}.")
+            return None
+
+        if download_path:
+            if not filename: # Ensure filename is not empty or None
+                logger.error(f"Filename is missing for attachment {attachment_id} in message {message_id}. Cannot save.")
+                # Still return the data as it was fetched, but log error for saving.
+                return attachment_data
+
+            full_save_path = os.path.join(download_path, filename)
+            try:
+                # Ensure the download directory exists
+                if not os.path.exists(download_path):
+                    os.makedirs(download_path) # Create directory if it doesn't exist
+                    logger.info(f"Created download directory: {download_path}")
+
+                with open(full_save_path, 'wb') as f:
+                    f.write(attachment_data)
+                logger.info(f"Attachment {attachment_id} (filename: {filename}) saved successfully to {full_save_path}.")
+            except IOError as e:
+                logger.error(f"IOError saving attachment {filename} to {full_save_path}: {e}")
+                # Decide if this should return None or the data.
+                # For now, return data as it was successfully fetched, but saving failed.
+                return attachment_data
+            except Exception as e:
+                logger.error(f"Unexpected error saving attachment {filename} to {full_save_path}: {e}")
+                return attachment_data # Still return data if fetched
+
+        return attachment_data

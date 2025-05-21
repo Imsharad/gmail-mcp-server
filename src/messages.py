@@ -4,9 +4,13 @@ Gmail Message Management Module
 
 import base64
 import logging
+import os # For os.path.basename
+import mimetypes # For guessing MIME type
 from typing import Dict, List, Any, Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase # For creating attachment parts
+from email.encoders import encode_base64 # For encoding attachment payload
 
 from googleapiclient.discovery import Resource # For type hinting the service object
 import googleapiclient.errors
@@ -71,6 +75,47 @@ def _get_message_body(payload: Dict[str, Any]) -> str:
              return '\n---\n'.join(html_parts)
 
     return "" # No readable body found
+
+
+def _extract_attachment_info(part: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extracts attachment information from a message part.
+
+    Args:
+        part: A dictionary representing a part of a message.
+
+    Returns:
+        A dictionary containing attachment details if the part is an attachment,
+        otherwise None.
+    """
+    filename = part.get('filename')
+    content_disposition_header = next((header['value'] for header in part.get('headers', []) if header['name'].lower() == 'content-disposition'), None)
+
+    if not filename and content_disposition_header:
+        # Try to parse filename from Content-Disposition header
+        # Example: "attachment; filename=\"example.txt\""
+        if 'filename=' in content_disposition_header:
+            filename_parts = content_disposition_header.split('filename=')
+            if len(filename_parts) > 1:
+                filename = filename_parts[1].strip('" ') # Strip quotes and spaces
+
+    if filename: # A part is considered an attachment if it has a filename
+        attachment_id = part.get('body', {}).get('attachmentId')
+        # Some inline images might not have attachmentId but will have data in body
+        # and a partId. The partId can sometimes be used with attachmentId endpoint
+        # for certain types of inline images if attachmentId is missing.
+        if not attachment_id and part.get('body', {}).get('data'):
+             logger.debug(f"Attachment '{filename}' has no attachmentId, but has body data. Using partId as fallback for ID.")
+        # It's crucial to have either an attachmentId or expect the data to be inline.
+        # For simplicity, we prioritize attachmentId for actual separate attachments.
+
+        return {
+            'filename': filename,
+            'mimeType': part.get('mimeType'),
+            'size': part.get('body', {}).get('size'),
+            'attachmentId': attachment_id,
+            'partId': part.get('partId')
+        }
+    return None
 
 def list_messages(service: Resource, max_results: int = 10, query: str = "") -> List[Dict[str, Any]]:
     """List messages from Gmail.
@@ -144,7 +189,8 @@ def get_message(service: Resource, message_id: str) -> Optional[Dict[str, Any]]:
         message_id: The ID of the message to retrieve
 
     Returns:
-        Message dictionary with full content or None if not found or on error.
+        Message dictionary with full content, including attachments, or None if not found or on error.
+        The 'attachments' key will hold a list of attachment details.
     """
     try:
         # Get the full message content
@@ -160,6 +206,30 @@ def get_message(service: Resource, message_id: str) -> Optional[Dict[str, Any]]:
         # Extract body content using the helper function
         body = _get_message_body(msg['payload'])
 
+        # Extract attachment information
+        attachments_info = []
+        
+        def _process_parts(parts: List[Dict[str, Any]]):
+            """Helper to recursively process message parts for attachments."""
+            if not parts:
+                return
+            for part in parts:
+                attachment_detail = _extract_attachment_info(part)
+                if attachment_detail:
+                    attachments_info.append(attachment_detail)
+                
+                # Recursively process nested parts
+                if 'parts' in part:
+                    _process_parts(part['parts'])
+
+        if 'payload' in msg and 'parts' in msg['payload']:
+            _process_parts(msg['payload']['parts'])
+        elif 'payload' in msg: # Handle cases where the payload itself might be an attachment (e.g. simple EML attachment)
+            attachment_detail = _extract_attachment_info(msg['payload'])
+            if attachment_detail:
+                attachments_info.append(attachment_detail)
+
+
         # Create a detailed message object
         detailed_message = {
             'id': msg['id'],
@@ -172,11 +242,12 @@ def get_message(service: Resource, message_id: str) -> Optional[Dict[str, Any]]:
             'labels': msg.get('labelIds', []),
             'read': 'UNREAD' not in msg.get('labelIds', []),
             'body': body,
+            'attachments': attachments_info, # Add attachments here
             'snippet': msg.get('snippet', ''), # Include snippet too
             'historyId': msg.get('historyId', ''),
             'internalDate': msg.get('internalDate', '') # Unix timestamp ms
         }
-        logger.info(f"Successfully retrieved full message {message_id}")
+        logger.info(f"Successfully retrieved full message {message_id} with {len(attachments_info)} attachments.")
         return detailed_message
 
     except googleapiclient.errors.HttpError as e:
@@ -189,45 +260,71 @@ def get_message(service: Resource, message_id: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Unexpected error getting message {message_id}: {e}")
         return None
 
-def send_message(service: Resource, to: str, subject: str, body: str) -> Optional[str]:
-    """Send a new email.
+def send_message(service: Resource, to: str, subject: str, body: str, attachments: Optional[List[str]] = None) -> Optional[str]:
+    """Send a new email, optionally with attachments.
 
     Args:
         service: Authorized Google API service instance.
-        to: Recipient email address
-        subject: Email subject
-        body: Email body content (plain text)
+        to: Recipient email address.
+        subject: Email subject.
+        body: Email body content (plain text).
+        attachments: Optional. A list of file paths for files to be attached.
 
     Returns:
-        Message ID if successful, None otherwise
+        Message ID if successful, None otherwise.
     """
     try:
-        # Create a MIME message object
-        message = MIMEMultipart() # Use multipart in case of future attachment needs
+        message = MIMEMultipart()
         message['to'] = to
         message['subject'] = subject
 
         # Attach the body as plain text
         message.attach(MIMEText(body, 'plain'))
 
+        # Handle attachments if provided
+        if attachments:
+            for file_path in attachments:
+                try:
+                    logger.info(f"Attempting to attach file: {file_path}")
+                    content_type, encoding = mimetypes.guess_type(file_path)
+
+                    if content_type is None or encoding is not None: # If encoding is not None, it's likely a text type guessed by mimetypes
+                        content_type = 'application/octet-stream' # Default for unknown or encoded types
+
+                    main_type, sub_type = content_type.split('/', 1)
+
+                    with open(file_path, 'rb') as fp:
+                        file_data = fp.read()
+
+                    part = MIMEBase(main_type, sub_type)
+                    part.set_payload(file_data)
+                    encode_base64(part) # Encode the payload
+
+                    # Add Content-Disposition header
+                    part.add_header('Content-Disposition', 'attachment', filename=os.path.basename(file_path))
+                    message.attach(part)
+                    logger.info(f"Successfully attached file: {file_path}")
+
+                except FileNotFoundError:
+                    logger.error(f"Attachment file not found: {file_path}. Skipping this attachment.")
+                except Exception as e:
+                    logger.error(f"Error attaching file {file_path}: {e}. Skipping this attachment.")
+
         # Encode the message for the API
         raw_message_bytes = message.as_bytes()
         raw_message = base64.urlsafe_b64encode(raw_message_bytes).decode('utf-8')
 
-        # Prepare the request body
         message_body = {'raw': raw_message}
+        sent_message = service.users().messages().send(userId='me', body=message_body).execute()
 
-        # Send the message
-        sent_message = service.users().messages().send(
-            userId='me', body=message_body).execute()
-
-        logger.info(f"Message sent successfully to {to} with ID: {sent_message['id']}")
+        num_attachments = len(attachments) if attachments else 0
+        logger.info(f"Message sent successfully to {to} with {num_attachments} attachments. ID: {sent_message['id']}")
         return sent_message['id']
 
     except googleapiclient.errors.HttpError as e:
         logger.error(f"HTTP error sending message to {to}: {e}")
         return None
-    except Exception as e:
+    except Exception as e: # Catching broader exceptions for robustness
         logger.error(f"Unexpected error sending message to {to}: {e}")
         return None
 
@@ -423,4 +520,46 @@ def modify_message_labels(service: Resource, message_id: str,
         return None
     except Exception as e:
         logger.error(f"Unexpected error modifying labels for message {message_id}: {e}")
-        return None 
+        return None
+
+
+def get_attachment_data(service: Resource, message_id: str, attachment_id: str) -> Optional[bytes]:
+    """Fetches and decodes attachment data from a message.
+
+    Args:
+        service: Authorized Google API service instance.
+        message_id: The ID of the message containing the attachment.
+        attachment_id: The ID of the attachment (from part['body']['attachmentId']).
+
+    Returns:
+        The decoded attachment data as bytes, or None if an error occurs.
+    """
+    try:
+        attachment_part = service.users().messages().attachments().get(
+            userId='me', messageId=message_id, id=attachment_id
+        ).execute()
+
+        data = attachment_part.get('data')
+        if not data:
+            logger.error(f"No data found in attachment {attachment_id} for message {message_id}.")
+            return None
+
+        # Base64url decode the data. Padding issues are less common with urlsafe_b64decode
+        # but it's good to be aware. The Gmail API typically provides correctly padded base64url.
+        try:
+            decoded_data = base64.urlsafe_b64decode(data)
+            logger.info(f"Successfully fetched and decoded attachment {attachment_id} from message {message_id}.")
+            return decoded_data
+        except Exception as decode_error: # Catch potential errors during decoding
+            logger.error(f"Error decoding attachment data for {attachment_id} in message {message_id}: {decode_error}")
+            return None
+
+    except googleapiclient.errors.HttpError as e:
+        if e.resp.status == 404:
+            logger.warning(f"Attachment with ID {attachment_id} not found in message {message_id}.")
+        else:
+            logger.error(f"API error getting attachment {attachment_id} for message {message_id}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error getting attachment {attachment_id} for message {message_id}: {e}")
+        return None
