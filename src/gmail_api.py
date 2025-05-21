@@ -13,6 +13,7 @@ from googleapiclient.discovery import build, Resource
 from .auth import authenticate_google_api # Use relative import
 from . import messages # Import the whole module
 from . import labels   # Import the whole module
+from . import drafts   # Import the whole module
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -140,4 +141,48 @@ class GmailClient:
         if not self.authenticated or not self.service:
             logger.error(f"Not authenticated. Cannot delete label {label_id}.")
             return False
-        return labels.delete_label(self.service, label_id) 
+        return labels.delete_label(self.service, label_id)
+
+    # --- Draft Methods (Delegation) ---
+
+    def list_drafts(self, max_results: int = 10) -> List[Dict[str, Any]]:
+        """List draft emails. Delegates to the drafts module."""
+        if not self.authenticated or not self.service:
+            logger.error("Not authenticated. Cannot list drafts.")
+            return []
+        return drafts.list_drafts(self.service, max_results)
+
+    def get_draft(self, draft_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific draft. Delegates to the drafts module."""
+        if not self.authenticated or not self.service:
+            logger.error(f"Not authenticated. Cannot get draft {draft_id}.")
+            return None
+        return drafts.get_draft(self.service, draft_id)
+
+    def create_draft(self, to: str, subject: str, body: str) -> Optional[Dict[str, Any]]:
+        """Create a new draft email. Delegates to the drafts module."""
+        if not self.authenticated or not self.service:
+            logger.error("Not authenticated. Cannot create draft.")
+            return None
+        return drafts.create_draft(self.service, to, subject, body)
+
+    def update_draft(self, draft_id: str, to: str, subject: str, body: str) -> Optional[Dict[str, Any]]:
+        """Update an existing draft. Delegates to the drafts module."""
+        if not self.authenticated or not self.service:
+            logger.error(f"Not authenticated. Cannot update draft {draft_id}.")
+            return None
+        return drafts.update_draft(self.service, draft_id, to, subject, body)
+
+    def delete_draft(self, draft_id: str) -> bool:
+        """Delete a draft. Delegates to the drafts module."""
+        if not self.authenticated or not self.service:
+            logger.error(f"Not authenticated. Cannot delete draft {draft_id}.")
+            return False
+        return drafts.delete_draft(self.service, draft_id)
+
+    def send_draft(self, draft_id: str) -> Optional[Dict[str, Any]]:
+        """Send an existing draft. Delegates to the drafts module."""
+        if not self.authenticated or not self.service:
+            logger.error(f"Not authenticated. Cannot send draft {draft_id}.")
+            return None
+        return drafts.send_draft(self.service, draft_id)
